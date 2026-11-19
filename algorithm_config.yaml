@@ -13,55 +13,22 @@ disk_space: 200GB
 queue: maap-dps-worker-32vcpu-64gb
 build_command: nisar-gcov-ease2-maap/build-env.sh
 run_command: nisar-gcov-ease2-maap/run_maap.sh
+
 inputs:
-  config: []
   file:
     - name: input_file
-      description: URL or MAAP-accessible S3 URI to one NISAR L2 GCOV HDF5 granule
+      description: MAAP-accessible NISAR L2 GCOV HDF5 URI; first overall positional argument
       required: true
-      default: ""
   positional:
-    - name: ease2_res
-      description: EASE2 nominal output resolution (50 or 100 m)
-      required: false
-      default: "100"
-    - name: backscatter
-      description: Linear backscatter convention gamma0 or sigma0
-      required: false
-      default: gamma0
-    - name: frequency
-      description: frequencyA or frequencyB
-      required: false
-      default: frequencyA
-    - name: pol_pair
-      description: auto, HH_HV, VV_VH, or RH_RV
-      required: false
-      default: auto
-    - name: mode
-      description: nofilt, enhanced_lee, gamma_map, or all
-      required: false
-      default: nofilt
-    - name: filter_window
-      description: Odd window >=3 for speckle filtering
-      required: false
-      default: "7"
-    - name: mosaic
-      description: Mosaic compatible adjacent frames (yes or no)
-      required: false
-      default: "yes"
-    - name: use_exception_mask
-      description: Apply CRID-specific exception masks (yes or no)
-      required: false
-      default: "yes"
-    - name: lia
-      description: Generate incidence angle and DEM-derived LIA (yes or no)
-      required: false
-      default: "no"
-    - name: workers
-      description: Parallel acquisition groups; start with 1
-      required: false
-      default: "1"
-    - name: tile_workers
-      description: Warp threads per acquisition group; start with 4
-      required: false
-      default: "4"
+    # Order MUST match positional_names in run_maap.sh.
+    - {name: ease2_res, required: false, default: "100", description: "EASE2 nominal resolution: 50 or 100 m"}
+    - {name: mode, required: false, default: nofilt, description: "nofilt, enhanced_lee, gamma_map, or all"}
+    - {name: filter_window, required: false, default: "7", description: "Odd filter window >= 3"}
+    - {name: lia, required: false, default: "no", description: "Generate incidence and LIA rasters"}
+    - {name: frequency, required: false, default: frequencyA, description: "frequencyA or frequencyB"}
+    - {name: backscatter, required: false, default: gamma0, description: "gamma0 or sigma0 linear power"}
+    - {name: clip_to_aoi, required: false, default: "no", description: "yes clips to bbox; no preserves full GCOV frames"}
+    - {name: bbox_w, required: false, default: none, description: "West longitude (EPSG:4326); required only for clipping"}
+    - {name: bbox_s, required: false, default: none, description: "South latitude (EPSG:4326); required only for clipping"}
+    - {name: bbox_e, required: false, default: none, description: "East longitude (EPSG:4326); required only for clipping"}
+    - {name: bbox_n, required: false, default: none, description: "North latitude (EPSG:4326); required only for clipping"}
