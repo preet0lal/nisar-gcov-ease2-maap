@@ -1,130 +1,100 @@
-# Register this NEW algorithm on NASA MAAP (DPS)
+# Register NISAR GCOV EASE2 on MAAP DPS
 
-**Important:** Register with a **new, unique algorithm name**. Reusing an existing
-MAAP algorithm name can replace the previous algorithm, even if the repository
-is different. The original `NISAR_GCOV_TO_TIFF` repo must not be changed.
+This guide belongs to the **new and independent** repository [`preet0lal/nisar-gcov-ease2-maap`](https://github.com/preet0lal/nisar-gcov-ease2-maap). It does **not** replace or modify the older `NISAR_GCOV_TO_TIFF` repository or algorithm. Do not reuse the existing MAAP algorithm name.
 
-After creating a new **public** GitHub repository with these files at its root:
+## 1. MAAP registration form
 
-| Registration field | Value |
+| MAAP field | Enter this |
 |---|---|
 | Repository URL | `https://github.com/preet0lal/nisar-gcov-ease2-maap.git` |
 | Repository Branch | `main` |
 | Run Command | `nisar-gcov-ease2-maap/run_maap.sh` |
 | Build Command | `nisar-gcov-ease2-maap/build-env.sh` |
 | Algorithm Name | `nisar-gcov-ease2-v1` |
-| Algorithm Description | `NISAR L2 GCOV to EPSG:6933 EASE2 50/100 m linear gamma0/sigma0 GeoTIFF, CRID-aware masks, filtering, mosaics and optional LIA.` |
-| Disk Space (GB) | `200` (starting point; adapt to frame size, resolution and filtering) |
-| Resource Allocation | `maap-dps-worker-32vcpu-64gb` **if present in your dropdown**; otherwise select an appropriate available queue |
+| Algorithm Description | `Convert NISAR L2 GCOV HDF5 to EASE-Grid 2.0 50/100 m linear gamma0/sigma0 GeoTIFFs with CRID-aware masks, filtering, mosaics and optional incidence/LIA.` |
+| Disk Space (GB) | `200` to start; tune for actual scene size and options |
+| Resource Allocation | Choose a queue with sufficient CPU/RAM; `maap-dps-worker-32vcpu-64gb` if available |
 | Container URL | `mas.maap-project.org/root/maap-workspaces/custom_images/maap_base:v6.0.0` |
 
-MAAP may display the code path relative to a clone directory rather than the
-repository root. The example above follows MAAP's current documented
-`repository-name/path/to/script.sh` convention. If the build fails with a file
-not found, check the clone path printed in the registration log.
+The run/build paths above follow MAAP's `repository-name/script.sh` convention. If the MAAP build log shows a different checkout path, use the path shown there.
 
-## Inputs to add in the MAAP form
+## 2. File Input and Positional Inputs
 
-### File Inputs
+Create a required **File Input** named `input_file`. At submission, use a MAAP-accessible URI to **one standard-named NISAR L2 GCOV HDF5 granule** (usually `.h5`). MAAP may stage the file automatically. If an `s3://` input is not staged, `run_maap.sh` attempts to download it using temporary Earthdata S3 credentials from MAAP through `maap_s3.py`.
 
-Create one **required** File Input with name `input_file`. Its value at job
-submission should be a MAAP-accessible HDF5 file URI (HTTPS or S3), not a path
-on your personal workstation or an inaccessible MAAP notebook filesystem.
-DPS stages the file before running the script. The wrapper handles the staged
-local file or resolves a URI to the staged basename.
+**Important: `run_maap.sh` accepts raw positional inputs**, in the following exact order. Register optional *Positional Inputs* in this order **after** `input_file` if you need to control them from the MAAP submission form:
 
-### Optional named parameters
+| Overall position | Input name | Default | What to enter |
+|---:|---|---|---|
+| 1 | `input_file` (**File Input**) | Required | One MAAP-accessible HDF5 URI |
+| 2 | `ease2_res` | `100` | `50` or `100` |
+| 3 | `mode` | `nofilt` | `nofilt`, `enhanced_lee`, `gamma_map`, `all` |
+| 4 | `filter_window` | `7` | Odd integer ≥ 3 |
+| 5 | `lia` | `no` | `yes` or `no` |
+| 6 | `frequency` | `frequencyA` | `frequencyA` or `frequencyB` |
+| 7 | `backscatter` | `gamma0` | `gamma0` or `sigma0`, linear power |
+| 8 | `clip_to_aoi` | `no` if bbox not supplied | `no` to preserve entire frame; `yes` to crop |
+| 9 | `bbox_w` | Unset | West longitude, decimal degrees |
+| 10 | `bbox_s` | Unset | South latitude, decimal degrees |
+| 11 | `bbox_e` | Unset | East longitude, decimal degrees |
+| 12 | `bbox_n` | Unset | North latitude, decimal degrees |
 
-Use the optional named arguments in the MAAP interface if that interface
-supports them. Some registration screens call these *Positional Inputs*, but
-the actual run script expects `--name value`, not unnamed positional values.
+In the **positional** interface, `none`, `-`, `null`, or empty values retain defaults. To crop, provide all four bounds in EPSG:4326, with west < east and south < north. To **keep whole GCOV frames even when they intersect only part of an AOI**, set `clip_to_aoi=no` (or omit bbox arguments entirely).
 
-| Parameter | Default | Allowed values / purpose |
-|---|---|---|
-| `ease2_res` | `100` | `50`, `100` |
-| `backscatter` | `gamma0` | `gamma0`, `sigma0` (linear power) |
-| `frequency` | `frequencyA` | `frequencyA`, `frequencyB` |
-| `pol_pair` | `auto` | `auto`, `HH_HV`, `VV_VH`, `RH_RV` |
-| `mode` | `nofilt` | `nofilt`, `enhanced_lee`, `gamma_map`, `all` |
-| `filter_window` | `7` | odd integer ≥3 |
-| `mosaic` | `yes` | `yes`, `no` |
-| `use_exception_mask` | `yes` | `yes`, `no`; preserves product-maturity logic |
-| `lia` | `no` | `yes`, `no`; see credential warning below |
-| `workers` | `1` | number of acquisition-group processes |
-| `tile_workers` | `4` | threads per processing group |
+### Example 1 — defaults
 
-**Simplest registration:** add only the `input_file` File Input and no other
-inputs. The wrapper then uses 100 m, gamma0, frequencyA, no filter, and CRID-aware
-quality masks. To change settings through the MAAP Submit Job form, explicitly
-register the matching named parameters; otherwise run the wrapper from a
-terminal using additional flags.
+Register only `input_file`. The wrapper will use **100 m**, **gamma0**, **nofilt**, **frequencyA**, **LIA off**, default quality masking, and **full-frame output**.
 
-## Data layout and limitations
+### Example 2 — 50 m sigma0, enhanced Lee, full frame
 
-- The MAAP runner writes to the working directory's `output/` in the **foreground**.
-  Output TIFF, PNG, MAT, and logs are uploaded by DPS upon successful completion.
-- The untouched original `NISAR_GCOV_EASE2.sh` is for cluster/terminal use and
-  starts a detached `nohup` job. Do **not** use it as the MAAP Run Command.
-- One File Input means **one GCOV granule per MAAP job**. Compatible adjacent
-  frames can be mosaicked only if multiple granules are staged in the **same**
-  job and supplied to `--input_dir`. A notebook's local file path cannot be
-  assumed to exist on a remote DPS worker.
-- The processor preserves the existing no-overwrite semantics. `--bbox` is
-  **not supplied** by default, so SAR is not clipped to an AOI.
-- For `--lia yes`, the processor needs an accessible NISAR DEM: either HTTPS
-  with valid Earthdata credentials within the worker or a staged local DEM.
-  Neither `~/.netrc` nor a local DEM cache from your notebook is transferred
-  automatically to DPS. Start with `lia=no` to validate the registration.
-- EASE2 50 m can require substantial temporary storage. Choose sufficient disk
-  and RAM based on GCOV frame size; `200 GB` is a suggested starting point,
-  not a benchmarked requirement.
-
-## Test in a MAAP terminal before registration
+The equivalent manual positional command is:
 
 ```bash
-bash build-env.sh
+bash run_maap.sh s3://bucket/path/standard_named_NISAR_GCOV.h5 \
+  50 enhanced_lee 7 no frequencyA sigma0 no
+```
+
+The URI above is an illustrative placeholder; use the real granule URL. The order of registered optional inputs must match the order in this command.
+
+### Example 3 — enable an explicit output clip
+
+```bash
+bash run_maap.sh s3://bucket/path/standard_named_NISAR_GCOV.h5 \
+  100 nofilt 7 no frequencyA gamma0 yes 95 -11 141 6
+```
+
+This example crops output to west=95°, south=-11°, east=141°, north=6°; it is **not** a requirement of the algorithm.
+
+## 3. Named flag interface for debugging and local runs
+
+The same runner accepts named flags. Unlike the original HPC launcher, it runs in the foreground and writes to the MAAP job working directory's `output/`:
+
+```bash
+bash run_maap.sh \
+  --input_file /path/to/actual_NISAR_GCOV.h5 \
+  --ease2_res 100 --mode nofilt --backscatter gamma0 \
+  --lia no --clip_to_aoi no
+```
+
+The Python processor itself uses `--input_dir` and `--output_dir`, and `--filter none` instead of wrapper `--mode nofilt`; see the main README.
+
+## 4. Important processing and infrastructure notes
+
+- **MAAP must run `run_maap.sh`**, not `NISAR_GCOV_EASE2.sh`. The latter launches detached `nohup` processes and is for standalone HPC use.
+- One `input_file` means one granule per DPS job. `--mosaic yes` only mosaics compatible frames **within one invocation**, not across separate MAAP jobs.
+- If a granule is supplied by S3 and not staged, the runner requests temporary Earthdata S3 credentials via `maap_s3.py` and downloads the file. Access depends on MAAP authentication, bucket permissions, and availability of MAAP's base Python helper dependencies (`maap-py`, `s3fs`).
+- For `lia=yes`, the runner attempts to use temporary Earthdata S3 credentials and the NISAR DEM via `/vsis3`, otherwise falls back to its default DEM URL. GDAL access and DEM availability are required. A local laptop's `~/.netrc`, cookies, or cache do not automatically follow a DPS job. Start with `lia=no` for first deployment testing.
+- Outputs are saved under `output/`: linear backscatter GeoTIFFs, a frame-count GeoTIFF, quicklook PNG, EASE2 grid MAT, logs, and optional geometry rasters.
+- **No overwrite:** complete existing acquisitions are skipped; incompatible or partial results are not silently replaced.
+- 200 GB and a 32-vCPU/64-GB queue are **initial suggestions**, not validated minimum requirements. 50 m processing and LIA can require much more scratch space.
+
+## 5. Test before production
+
+```bash
+bash -n run_maap.sh build-env.sh NISAR_GCOV_EASE2.sh
+python -m py_compile NISAR_GCOV_TO_EASE2.py
 bash tests/test_maap_wrapper.sh
 bash run_maap.sh --help
-# For a REAL local test, with existing GCOV files:
-mkdir -p output
-bash run_maap.sh --input_dir /path/to/gcov_frames \
-  --ease2_res 100 --backscatter gamma0 --mode nofilt
 ```
 
-## Push to a separate GitHub repository
-
-First, create a **new empty, public** repo named `nisar-gcov-ease2-maap`
-at https://github.com/new under `preet0lal` (do not select any existing repo).
-When using this folder from the ZIP:
-
-```bash
-cd nisar-gcov-ease2-maap
-git init -b main
-git add .
-git commit -m "Add standalone NISAR GCOV EASE2 MAAP DPS algorithm"
-git remote add origin https://github.com/preet0lal/nisar-gcov-ease2-maap.git
-git push -u origin main
-```
-
-Do **not** add this as a new branch inside the old NISAR GCOV repository.
-
-## DPS job inputs (positional, as registered)
-
-MAAP DPS passes registered inputs to the run command as **bare values in
-registration order**, so `run_maap.sh` accepts this positional form
-(empty, `none` or `-` keeps the default):
-
-| # | Input | Default | Values |
-|---|---|---|---|
-| 1 | `input_file` | (required) | `s3://...GCOV...h5` (downloaded with temporary Earthdata S3 credentials if not already staged) |
-| 2 | `ease2_res` | `100` | `50`, `100` |
-| 3 | `mode` | `enhanced_lee` | `nofilt`, `enhanced_lee`, `gamma_map`, `all` |
-| 4 | `filter_window` | `7` | odd integer >= 3 |
-| 5 | `lia` | `yes` | `yes`, `no` (DEM read via `/vsis3` with temporary Earthdata S3 credentials) |
-| 6 | `frequency` | `frequencyA` | `frequencyA`, `frequencyB` |
-| 7 | `backscatter` | `gamma0` | `gamma0`, `sigma0` (sigma0 = gamma0 x rtcGammaToSigmaFactor, linear power) |
-| 8 | `clip_to_aoi` | `no` | `yes` crops outputs to the bbox; `no` keeps full frames |
-| 9-12 | `bbox_w`, `bbox_s`, `bbox_e`, `bbox_n` | `none` | AOI in EPSG:4326; required only when `clip_to_aoi=yes` |
-
-The named `--option value` form still works for terminal use; `--clip_to_aoi`
-and `--bbox_w/--bbox_s/--bbox_e/--bbox_n` are also available there.
+The provided wrapper smoke test uses a dummy processor. It checks argument handling and output routing but is **not a real-data numerical validation**. Run one known GCOV acquisition end to end on MAAP, check the `processing.log`, confirm EPSG:6933 and the expected masks/normalization, then expand to batches.
