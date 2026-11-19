@@ -1,0 +1,67 @@
+# Optional reference configuration for MAAP registration.
+# This GitHub URL becomes usable AFTER the new public repository is created.
+algorithm_name: nisar-gcov-ease2-v1
+algorithm_description: >-
+  Convert NISAR L2 GCOV HDF5 granules to 50 m or 100 m EASE-Grid 2.0
+  (EPSG:6933) linear-power gamma0/sigma0 GeoTIFFs with CRID-aware
+  provisional/validated quality masking, optional filtering, mosaicking,
+  and local-incidence-angle outputs.
+algorithm_version: main
+repository_url: https://github.com/preet0lal/nisar-gcov-ease2-maap.git
+docker_container_url: mas.maap-project.org/root/maap-workspaces/custom_images/maap_base:v6.0.0
+disk_space: 200GB
+queue: maap-dps-worker-32vcpu-64gb
+build_command: nisar-gcov-ease2-maap/build-env.sh
+run_command: nisar-gcov-ease2-maap/run_maap.sh
+inputs:
+  config: []
+  file:
+    - name: input_file
+      description: URL or MAAP-accessible S3 URI to one NISAR L2 GCOV HDF5 granule
+      required: true
+      default: ""
+  positional:
+    - name: ease2_res
+      description: EASE2 nominal output resolution (50 or 100 m)
+      required: false
+      default: "100"
+    - name: backscatter
+      description: Linear backscatter convention gamma0 or sigma0
+      required: false
+      default: gamma0
+    - name: frequency
+      description: frequencyA or frequencyB
+      required: false
+      default: frequencyA
+    - name: pol_pair
+      description: auto, HH_HV, VV_VH, or RH_RV
+      required: false
+      default: auto
+    - name: mode
+      description: nofilt, enhanced_lee, gamma_map, or all
+      required: false
+      default: nofilt
+    - name: filter_window
+      description: Odd window >=3 for speckle filtering
+      required: false
+      default: "7"
+    - name: mosaic
+      description: Mosaic compatible adjacent frames (yes or no)
+      required: false
+      default: "yes"
+    - name: use_exception_mask
+      description: Apply CRID-specific exception masks (yes or no)
+      required: false
+      default: "yes"
+    - name: lia
+      description: Generate incidence angle and DEM-derived LIA (yes or no)
+      required: false
+      default: "no"
+    - name: workers
+      description: Parallel acquisition groups; start with 1
+      required: false
+      default: "1"
+    - name: tile_workers
+      description: Warp threads per acquisition group; start with 4
+      required: false
+      default: "4"
