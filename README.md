@@ -27,7 +27,8 @@ Convert **NASA–ISRO SAR (NISAR) Level-2 Geocoded Covariance (GCOV)** HDF5 gran
 | `NISAR_GCOV_TO_EASE2.py` | The underlying scientific processor; accepts CLI arguments and runs in the foreground |
 | `NISAR_GCOV_EASE2.sh` | Original **local/HPC** launcher; starts background `nohup` jobs and prints logs/PIDs |
 | **`run_maap.sh`** | **MAAP DPS entry point**; runs in the **foreground** and writes to DPS `output/` |
-| `build-env.sh` / `environment.yml` | Creates the MAAP-compatible `nisar_gcov_ease2` Conda environment |
+| `build-env.sh` / `environment.yml` | Creates the MAAP-compatible `nisar_gcov_ease2` Conda environment and checks base-image S3 helpers |
+| `maap_s3.py` | Obtains temporary Earthdata S3 credentials on MAAP, and downloads an `s3://` GCOV input if DPS did not stage it |
 | `MAAP_REGISTRATION.md` | Registration form settings and operational caveats |
 | `algorithm_config.yaml` | Human-readable example registration configuration; **not** itself automatically imported into MAAP |
 | `tests/test_maap_wrapper.sh` | Fast wrapper smoke test without NISAR data |
@@ -168,9 +169,32 @@ Open **MAAP → Register Algorithm**, with the code committed in this public rep
 | Resource Allocation | Choose an available worker with enough CPU/RAM; `maap-dps-worker-32vcpu-64gb` if offered |
 | Container URL | `mas.maap-project.org/root/maap-workspaces/custom_images/maap_base:v6.0.0` |
 
-**Required File Input:** Add one named `input_file` (a MAAP-accessible GCOV HDF5 URI). At job submission, DPS should stage it to the worker; `run_maap.sh` accepts the staged path or resolves the original URL by basename among known input directories. Start with a single granule and default parameters. The default path writes to the job's `output/` and runs **synchronously**, so MAAP can collect completed results and report failures.
+**Required File Input:** Add one named `input_file` (a MAAP-accessible GCOV HDF5 URI). At job submission, DPS can stage it to the worker; `run_maap.sh` accepts the staged path, resolves the original URL by basename in known input directories, or attempts a direct `s3://` download using temporary Earthdata S3 credentials via `maap_s3.py`. Start with one granule and default parameters. The runner writes to the job's `output/` and executes **synchronously**, so MAAP can collect completed results and report failures.
 
-**MAAP parameter caveat:** The script accepts explicit CLI flags such as `--ease2_res 50`, but MAAP's *Positional Inputs* are not necessarily passed as named `--flag value` arguments. Do not blindly add all optional parameters to *Positional Inputs* until your MAAP environment's argument mapping is confirmed. Start with only the required `input_file` File Input. For custom parameter configurations, use the wrapper's named arguments from a terminal or configure a verified MAAP argument mapping.
+### MAAP positional input order
+
+The **current GitHub `run_maap.sh` supports both** named flags (`--ease2_res 50`) **and bare positional values** supplied by MAAP DPS. When adding *Positional Inputs* in the registration UI, use **exactly this order after the File Input**; `none`, `-`, `null`, or an empty value means “keep the wrapper default”:
+
+| Position | MAAP input name | Default | Allowed values |
+|---:|---|---|---|
+| 1 | `input_file` (**File Input**) | Required | One GCOV HDF5 URI, e.g. `s3://…/NISAR_…h5` |
+| 2 | `ease2_res` | `100` | `50`, `100` |
+| 3 | `mode` | `nofilt` | `nofilt`, `enhanced_lee`, `gamma_map`, `all` |
+| 4 | `filter_window` | `7` | Odd integer ≥ 3 |
+| 5 | `lia` | `no` | `yes`, `no` |
+| 6 | `frequency` | `frequencyA` | `frequencyA`, `frequencyB` |
+| 7 | `backscatter` | `gamma0` | `gamma0`, `sigma0` |
+| 8 | `clip_to_aoi` | `no` when no bbox is supplied | `yes` to crop; `no` for full frames |
+| 9–12 | `bbox_w`, `bbox_s`, `bbox_e`, `bbox_n` | Unset | West, south, east, north, decimal degrees; only needed when clipping |
+
+Example **bare positional** call (50 m, enhanced Lee, sigma0, full frame):
+
+```bash
+bash run_maap.sh s3://bucket/path/NISAR_L2_PR_GCOV_EXAMPLE.h5 \
+  50 enhanced_lee 7 no frequencyA sigma0 no
+```
+
+This sample URI is illustrative, not an existing granule. For a first registration, you can add **only the required File Input** and use defaults. The named-flag interface remains available for manual runs.
 
 Full registration details: [MAAP_REGISTRATION.md](MAAP_REGISTRATION.md).
 
@@ -196,7 +220,7 @@ python NISAR_GCOV_TO_EASE2.py \
   --dem_dir /data/NISAR/DEM_tiles
 ```
 
-Alternatively, the script can read the official NISAR DEM VRT over HTTPS. The worker must have access to authenticated NASA Earthdata downloads (`~/.netrc` and a usable cookie configuration, where required), and GDAL tools `gdalwarp` / `gdalbuildvrt`. MAAP DPS workers **do not automatically inherit** credentials or DEM caches from your local laptop or notebook. For a first MAAP test, leave `--lia no`.
+Alternatively, the script can read the official NISAR DEM VRT over HTTPS. On MAAP, `run_maap.sh` first attempts to obtain **temporary Earthdata S3 credentials** through `maap_s3.py` and use the NISAR DEM VRT via `/vsis3`; if this fails it falls back to the processor's default DEM URL, which may require authenticated HTTPS access. The environment also needs GDAL tools `gdalwarp` / `gdalbuildvrt`. MAAP DPS workers **do not automatically inherit** credentials or DEM caches from your laptop/notebook. For a first MAAP test, leave `--lia no`.
 
 The resulting angle rasters use the **same EASE2 grid and SAR-valid coverage** as the backscatter outputs. They are angles in **degrees**, not backscatter quantities.
 
@@ -223,12 +247,13 @@ The resulting angle rasters use the **same EASE2 grid and SAR-valid coverage** a
 | `--tile_workers` | `4` | Warp threads per group |
 | `--tile_size_km` | `50` | Output window size for processing |
 | `--native_block_px` | `1024` | Native HDF5 processing block dimension |
-| `--bbox` | Unset | Geographic `W S E N`; **clips** output if supplied |
+| `--bbox` | Unset | Geographic `W S E N`; wrapper **clips** if bbox supplied and `clip_to_aoi` is not `no` |
+| `--clip_to_aoi` (MAAP wrapper) | `no` without bbox | `yes` uses bbox; `no` keeps complete frames even when bbox values were supplied |
 | `--keep_intermediate` | `no` | Retain temporary native products |
 | `--ease2_mat` | Unset | Optional grid coordinate validation |
 | `--dem_dir`, `--nisar_dem_vrt`, `--dem_cache_dir` | Optional | Terrain source/cache for LIA |
 
-Run `python NISAR_GCOV_TO_EASE2.py --help` and `bash run_maap.sh --help` for the supported interfaces. `NISAR_GCOV_EASE2.sh` uses `--res` and `--window` instead of the Python flag names.
+Run `python NISAR_GCOV_TO_EASE2.py --help` and `bash run_maap.sh --help` for the supported interfaces. The underlying Python processor itself has `--bbox` but does **not** have a `--clip_to_aoi` option; that switch belongs to the MAAP wrapper. `NISAR_GCOV_EASE2.sh` uses `--res` and `--window` instead of the Python flag names.
 
 ## 9. Verification and known limitations
 
@@ -251,7 +276,7 @@ The smoke test uses a **dummy processor**, so it verifies MAAP file staging, arg
 
 | Symptom | What to check |
 |---|---|
-| MAAP says input missing | File Input must be a MAAP-accessible URI; check whether DPS staged a `.h5`/`.hdf5` to `input/`, `inputs/`, or `/inputs` |
+| MAAP says input missing | Check DPS staging to `input/`, `inputs/`, or `/inputs`; for an un-staged `s3://` URI verify that MAAP can obtain temporary Earthdata S3 credentials with `maap_s3.py` |
 | MAAP exits while background task continues | Registered **`run_maap.sh`**, not the `nohup` HPC launcher |
 | Missing `conda` or Python modules | Confirm `build-env.sh` ran with a container providing Conda; inspect build logs |
 | All pixels masked | Check CRID, `inputDataExceptionMask` dtype/bits, native subswath mask, and `--min_coverage`; validated good pixels need not have mask value zero |
