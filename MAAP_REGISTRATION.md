@@ -107,3 +107,24 @@ git push -u origin main
 ```
 
 Do **not** add this as a new branch inside the old NISAR GCOV repository.
+
+## DPS job inputs (positional, as registered)
+
+MAAP DPS passes registered inputs to the run command as **bare values in
+registration order**, so `run_maap.sh` accepts this positional form
+(empty, `none` or `-` keeps the default):
+
+| # | Input | Default | Values |
+|---|---|---|---|
+| 1 | `input_file` | (required) | `s3://...GCOV...h5` (downloaded with temporary Earthdata S3 credentials if not already staged) |
+| 2 | `ease2_res` | `100` | `50`, `100` |
+| 3 | `mode` | `enhanced_lee` | `nofilt`, `enhanced_lee`, `gamma_map`, `all` |
+| 4 | `filter_window` | `7` | odd integer >= 3 |
+| 5 | `lia` | `yes` | `yes`, `no` (DEM read via `/vsis3` with temporary Earthdata S3 credentials) |
+| 6 | `frequency` | `frequencyA` | `frequencyA`, `frequencyB` |
+| 7 | `backscatter` | `gamma0` | `gamma0`, `sigma0` (sigma0 = gamma0 x rtcGammaToSigmaFactor, linear power) |
+| 8 | `clip_to_aoi` | `no` | `yes` crops outputs to the bbox; `no` keeps full frames |
+| 9-12 | `bbox_w`, `bbox_s`, `bbox_e`, `bbox_n` | `none` | AOI in EPSG:4326; required only when `clip_to_aoi=yes` |
+
+The named `--option value` form still works for terminal use; `--clip_to_aoi`
+and `--bbox_w/--bbox_s/--bbox_e/--bbox_n` are also available there.

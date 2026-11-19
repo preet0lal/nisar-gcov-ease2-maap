@@ -10,6 +10,13 @@ mkdir -p "$output_dir"
 usage() {
   cat <<'HELP'
 Usage: run_maap.sh [--input_file GCOV.h5 | --input_dir DIR] [named options]
+   or: run_maap.sh INPUT_FILE [EASE2_RES MODE FILTER_WINDOW LIA FREQUENCY \
+                   BACKSCATTER CLIP_TO_AOI BBOX_W BBOX_S BBOX_E BBOX_N]
+
+Positional form (used by MAAP DPS, which passes registered inputs as bare
+values in registration order). Empty, "none" or "-" keeps the default.
+CLIP_TO_AOI=yes crops outputs to BBOX_W BBOX_S BBOX_E BBOX_N (EPSG:4326);
+CLIP_TO_AOI=no keeps full frames and ignores the bbox values.
 
 MAAP DPS automatically downloads a registered File Input into the job's input
 folder. --input_file accepts that staged path, the source URL (resolved by
@@ -42,7 +49,8 @@ Options:
   --dem_cache_dir DIR         Optional writable cache, for LIA
   --earthdata_cookie PATH     Optional authenticated cookie file, for LIA
   --ease2_mat PATH            Optional grid-coordinate validation file
-  --bbox 'W S E N'            Optional geographic clip (omit for full frames)
+  --clip_to_aoi yes|no        Crop outputs to the AOI bbox (default: yes if a bbox is given)
+  --bbox 'W S E N'            AOI bbox in EPSG:4326 (or --bbox_w/--bbox_s/--bbox_e/--bbox_n)
   --keep_intermediate yes|no   Default no
   --help
 
@@ -76,12 +84,30 @@ dem_cache_dir=""
 earthdata_cookie=""
 ease2_mat=""
 bbox=""
+clip_to_aoi=""
+bbox_w=""
+bbox_s=""
+bbox_e=""
+bbox_n=""
 keep_intermediate="no"
+
+# Positional (MAAP DPS) form: first argument is not a --flag.
+if (($#)) && [[ "$1" != -* ]]; then
+  positional_names=(input_file ease2_res mode filter_window lia frequency
+                    backscatter clip_to_aoi bbox_w bbox_s bbox_e bbox_n)
+  (($# <= ${#positional_names[@]})) || { echo "ERROR: too many positional arguments ($#)" >&2; exit 2; }
+  index=0
+  for value in "$@"; do
+    case "${value,,}" in ""|none|-|null) ;; *) printf -v "${positional_names[$index]}" '%s' "$value" ;; esac
+    index=$((index + 1))
+  done
+  set --
+fi
 
 while (($#)); do
   case "$1" in
     -h|--help) usage; exit 0 ;;
-    --input_file|--input_dir|--ease2_res|--backscatter|--frequency|--pol_pair|--mode|--filter_window|--mosaic|--mosaic_across_modes|--use_exception_mask|--lia|--min_coverage|--noise_floor|--workers|--tile_workers|--tile_size_km|--native_block_px|--gap_threshold|--lia_dem_scale|--dem_dir|--nisar_dem_vrt|--dem_cache_dir|--earthdata_cookie|--ease2_mat|--bbox|--keep_intermediate)
+    --input_file|--input_dir|--ease2_res|--backscatter|--frequency|--pol_pair|--mode|--filter_window|--mosaic|--mosaic_across_modes|--use_exception_mask|--lia|--min_coverage|--noise_floor|--workers|--tile_workers|--tile_size_km|--native_block_px|--gap_threshold|--lia_dem_scale|--dem_dir|--nisar_dem_vrt|--dem_cache_dir|--earthdata_cookie|--ease2_mat|--bbox|--clip_to_aoi|--bbox_w|--bbox_s|--bbox_e|--bbox_n|--keep_intermediate)
       (($# >= 2)) || { echo "Missing value for $1" >&2; exit 2; }
       key="${1#--}"
       value="$2"
@@ -93,6 +119,7 @@ done
 
 # An explicitly supplied file means exactly ONE granule, even if the MAAP job
 # input/ folder holds other products. Symlink rather than copy multi-GB HDF5.
+base_python="${MAAP_BASE_PYTHON:-python3}"   # MAAP base image Python (maap-py, s3fs)
 stage_dir=""
 cleanup() { if [[ -n "$stage_dir" && -d "$stage_dir" ]]; then rm -rf -- "$stage_dir"; fi; }
 trap cleanup EXIT
@@ -110,6 +137,11 @@ if [[ -n "$input_file" ]]; then
       candidate="$(find "$directory" -maxdepth 4 -type f -name "$filename" -print -quit 2>/dev/null || true)"
       if [[ -n "$candidate" ]]; then source_file="$candidate"; break; fi
     done
+  fi
+  if [[ ! -f "$source_file" && "$input_file" == s3://* ]]; then
+    # Not staged by DPS: fetch it with temporary Earthdata S3 credentials.
+    source_file="$PWD/input/$filename"
+    "$base_python" "${script_dir}/maap_s3.py" get "$input_file" "$source_file"
   fi
   if [[ ! -f "$source_file" ]]; then
     echo "ERROR: MAAP file input was not staged/found: $input_file" >&2
@@ -150,6 +182,43 @@ else
   exit 1
 fi
 
+# ---- AOI clipping ----------------------------------------------------------
+if [[ -z "$bbox" && -n "$bbox_w$bbox_s$bbox_e$bbox_n" ]]; then
+  bbox="$bbox_w $bbox_s $bbox_e $bbox_n"
+fi
+[[ -n "$clip_to_aoi" ]] || { [[ -n "$bbox" ]] && clip_to_aoi="yes" || clip_to_aoi="no"; }
+case "$clip_to_aoi" in yes|no) ;; *) echo "ERROR: --clip_to_aoi must be yes or no" >&2; exit 2 ;; esac
+bbox_values=()
+if [[ "$clip_to_aoi" == "yes" ]]; then
+  read -r -a bbox_values <<< "${bbox//,/ }"
+  ((${#bbox_values[@]} == 4)) || { echo "ERROR: clip_to_aoi=yes requires a bbox W S E N" >&2; exit 2; }
+  python3 - "${bbox_values[@]}" <<'PY' || exit 2
+import sys
+try:
+    w, s, e, n = map(float, sys.argv[1:])
+except ValueError:
+    sys.exit("ERROR: bbox values must be numbers: " + " ".join(sys.argv[1:]))
+if not (-180 <= w < e <= 180 and -90 <= s < n <= 90):
+    sys.exit(f"ERROR: invalid bbox W={w} S={s} E={e} N={n} (need W<E, S<N)")
+PY
+  echo "[MAAP] AOI clip: outputs cropped to ${bbox_values[*]} (EPSG:4326)"
+else
+  echo "[MAAP] AOI clip: no (full frames)"
+fi
+
+# ---- LIA DEM access on DPS -------------------------------------------------
+# The NISAR DEM needs Earthdata access; on a DPS worker use temporary S3
+# credentials and the in-region /vsis3 path unless a DEM source was given.
+if [[ "$lia" == "yes" && -z "$dem_dir" && -z "$nisar_dem_vrt" ]]; then
+  if creds="$("$base_python" "${script_dir}/maap_s3.py" env 2>/dev/null)"; then
+    eval "$creds"; unset creds
+    nisar_dem_vrt="/vsis3/sds-n-cumulus-prod-nisar-products/DEM/v1.2/EPSG4326/EPSG4326.vrt"
+    echo "[MAAP] LIA DEM: $nisar_dem_vrt (temporary Earthdata S3 credentials)"
+  else
+    echo "[MAAP] WARNING: could not get Earthdata S3 credentials; LIA uses the processor's default DEM URL" >&2
+  fi
+fi
+
 processor="${MAAP_PROCESSOR_PATH:-${script_dir}/NISAR_GCOV_TO_EASE2.py}"
 [[ -f "$processor" ]] || { echo "ERROR: Python processor missing: $processor" >&2; exit 1; }
 
@@ -178,13 +247,10 @@ for filter in "${modes[@]}"; do
   [[ -z "$dem_cache_dir" ]] || args+=(--dem_cache_dir "$dem_cache_dir")
   [[ -z "$earthdata_cookie" ]] || args+=(--earthdata_cookie "$earthdata_cookie")
   [[ -z "$ease2_mat" ]] || args+=(--ease2_mat "$ease2_mat")
-  if [[ -n "$bbox" ]]; then
-    bbox_clean="${bbox//,/ }"
-    read -r -a bbox_values <<< "$bbox_clean"
-    ((${#bbox_values[@]} == 4)) || { echo "ERROR: --bbox requires W S E N" >&2; exit 2; }
+  if [[ "$clip_to_aoi" == "yes" ]]; then
     args+=(--bbox "${bbox_values[@]}")
   fi
-  echo "[MAAP] Starting NISAR GCOV EASE2; filter=$filter; resolution=${ease2_res}m; power=$backscatter"
+  echo "[MAAP] Starting NISAR GCOV EASE2; filter=$filter (window $filter_window); resolution=${ease2_res}m; power=$backscatter; frequency=$frequency; lia=$lia; clip_to_aoi=$clip_to_aoi"
   echo "[MAAP] Input: $input_dir"
   echo "[MAAP] Output: $target"
   # Deliberately foreground: MAAP must wait for the worker's process to finish.
