@@ -17,7 +17,7 @@ run_command: nisar-gcov-ease2-maap/run_maap.sh
 inputs:
   file:
     - name: input_file
-      description: MAAP-accessible NISAR L2 GCOV HDF5 URI; first overall positional argument
+      description: MAAP-accessible NISAR GCOV .h5 URI OR a single CSV batch manifest URI; first overall positional argument
       required: true
   positional:
     # Order MUST match positional_names in run_maap.sh.
