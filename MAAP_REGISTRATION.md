@@ -98,3 +98,16 @@ bash run_maap.sh --help
 ```
 
 The provided wrapper smoke test uses a dummy processor. It checks argument handling and output routing but is **not a real-data numerical validation**. Run one known GCOV acquisition end to end on MAAP, check the `processing.log`, confirm EPSG:6933 and the expected masks/normalization, then expand to batches.
+
+
+## NEW: one DPS job for every ISMN frame (manifest batch mode)
+
+The updated `run_maap.sh` now accepts either an individual `.h5`/`.hdf5` file (old behavior) or **one `.csv` manifest file** (new behavior). For CSV, the job sequentially processes every HDF5 listed in the manifest without creating any child DPS jobs. No scientific processing code was changed.
+
+**First re-register/rebuild** `nisar-gcov-ease2-v1` from the latest `main` commit. Pushing GitHub code alone does not update an already-registered MAAP container. Keep the original registration's ordered inputs: `input_file, ease2_res, mode, filter_window, lia, frequency, backscatter, clip_to_aoi`. Re-registering this algorithm name replaces its previous MAAP build. This leaves the older, separate NISAR-to-TIFF GitHub repository untouched.
+
+Open [`notebooks/ISMN_NISAR_GCOV_EASE2_50m_sigma0_ONE_JOB.ipynb`](notebooks/ISMN_NISAR_GCOV_EASE2_50m_sigma0_ONE_JOB.ipynb) in MAAP JupyterLab alongside `ismn_gt50_coords_points_june.csv`. Run discovery, inspect the manifest, then enable its confirmation flags. It uploads the manifest into your authorized workspace S3 prefix, and makes **one** `maap.submitJob` call. It uses 50 m EPSG:6933, linear sigma0, enhanced Lee 7x7, frequencyA, no AOI clipping and no LIA. The worker downloads each HDF5 using NISAR Earthdata credentials, processes full-frame outputs, deletes the HDF5 and proceeds to the next.
+
+Batch output files include `single_dps_job_scene_ledger.csv`, `single_dps_job_summary.json`, the manifest copy and individual SAR GeoTIFF/PNG/MAT outputs under the **same** job's `output/` folder. A nonzero result indicates at least one failed scene. Batch mode saves separate scene outputs and does **not** mosaic adjacent frames across the manifest because it processes one frame at a time.
+
+**Limits:** a typical DPS job has a **24-hour maximum** and a finite disk allocation; all 50 m scenes may not finish in a single attempt. Submit only after reviewing the number of matched scenes and the estimated processing time. DPS generally publishes output upon job completion; a failed or timed-out job may have incomplete or triaged outputs.
