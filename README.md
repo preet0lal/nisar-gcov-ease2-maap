@@ -287,3 +287,32 @@ The smoke test uses a **dummy processor**, so it verifies MAAP file staging, arg
 ## Provenance
 
 EASE2-only processing scripts provided **2026-11-19**; MAAP DPS wrapper and documentation added in this independent repository. The source-code checksums are available in [`SOURCE_SHA256.txt`](SOURCE_SHA256.txt). There is no stated license for these source files; contact the repository owner before assuming permission to redistribute or reuse outside applicable terms.
+
+
+## Process all matching GCOV frames in **one MAAP DPS job** (ISMN stations)
+
+The existing notebook `notebooks/ISMN_NISAR_GCOV_EASE2_50m_sigma0_MAAP.ipynb` submits one job *per granule*. **Do not use it if you want exactly one job.**
+
+Use **[`notebooks/ISMN_NISAR_GCOV_EASE2_50m_sigma0_ONE_JOB.ipynb`](notebooks/ISMN_NISAR_GCOV_EASE2_50m_sigma0_ONE_JOB.ipynb)** with the uploaded `ismn_gt50_coords_points_june.csv` instead. This notebook:
+
+1. Searches the *provisional* and *validated* CMR collections for June 1, 2026 through the day you run it; matches all input station coordinates against the returned scene footprints and deduplicates by acquisition, preferring validated products.
+2. Saves a `granule_manifest.csv` containing **one S3 URL per selected full GCOV scene**; keeps station-to-frame matches in a separate CSV.
+3. Uploads only the small manifest to your private MAAP workspace S3 bucket using temporary workspace credentials.
+4. Calls `maap.submitJob(...)` **exactly once**, with that manifest S3 URL as the registered File Input `input_file`. The other positional inputs select `ease2_res=50`, `backscatter=sigma0`, `mode=enhanced_lee`, `filter_window=7`, `lia=no`, `frequency=frequencyA`, `clip_to_aoi=no`.
+5. In the one DPS worker, `run_maap.sh` recognizes `.csv` instead of `.h5` and executes `maap_batch_manifest.py`. It downloads a GCOV granule, calls the original MAAP foreground processor, saves complete 50 m EASE2 output files under the job's `output/`, deletes the source HDF5 and repeats for the remaining rows. A scene ledger and summary are saved in `output/`.
+
+**Re-register the updated MAAP algorithm** `nisar-gcov-ease2-v1`, branch `main`, using this repository after the batch changes have been pushed. A GitHub commit does not automatically replace an already-built MAAP container. Re-registering the same name replaces the existing MAAP registration; individual HDF5 inputs remain supported. Do **not** modify or register your unrelated older GCOV-to-TIFF repository.
+
+The first notebook run is a **dry run** (`SUBMIT_JOB=False`). After confirming the revised build and input order, set all three:
+
+```python
+SUBMIT_JOB = True
+CONFIRM_MAAP_BATCH_BUILD = True
+CONFIRM_MAAP_INPUT_ORDER = True
+```
+
+The notebook records the one job ID and refuses to submit a second job automatically when a prior submission record exists.
+
+**Operational constraints:** MAAP normally limits individual DPS jobs to approximately **24 hours**. A global multi-month GCOV selection at 50 m could exceed this, or the available 200 GB scratch/output allocation. The single-job mode does **not** guarantee completion regardless of scene count. The worker processes **one whole scene at a time**, so it **does not build across-frame mosaics**, even if individual filenames share a track/date; each scene still preserves its full spatial footprint. Job outputs are normally collected by DPS when the job completes; a timeout may leave outputs incomplete or in triage. The scene ledger is inside `output/`, not an independent permanent checkpoint.
+
+For a small offline validation of the driver, see the examples in the notebook and run `python maap_batch_manifest.py --help`. The batch manifest requires at least `granule,input_file,maturity,date`, with one authenticated `s3://` NISAR HDF5 per row. No independent DPS subjobs are launched.
