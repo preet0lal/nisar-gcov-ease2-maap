@@ -141,12 +141,38 @@ if [[ -n "$input_file" ]]; then
   if [[ ! -f "$source_file" && "$input_file" == s3://* ]]; then
     # Not staged by DPS: fetch it with temporary Earthdata S3 credentials.
     source_file="$PWD/input/$filename"
-    "$base_python" "${script_dir}/maap_s3.py" get "$input_file" "$source_file"
+    if [[ "$input_file" == s3://maap-ops-workspace/* ]]; then
+      # A CSV manifest in the MAAP private workspace bucket may not be staged
+      # automatically by older DPS builds; use workspace credentials if needed.
+      "$base_python" "${script_dir}/maap_workspace_s3.py" get "$input_file" "$source_file"
+    else
+      "$base_python" "${script_dir}/maap_s3.py" get "$input_file" "$source_file"
+    fi
   fi
   if [[ ! -f "$source_file" ]]; then
     echo "ERROR: MAAP file input was not staged/found: $input_file" >&2
     echo "Expected a downloaded .h5/.hdf5 file in input/, inputs/ or /inputs." >&2
     exit 2
+  fi
+  # Manifest CSV => one DPS job sequentially processes EVERY listed full GCOV frame.
+  # Individual .h5/.hdf5 inputs retain the previous one-scene behavior.
+  if [[ "${source_file,,}" == *.csv ]]; then
+    echo "[MAAP] Manifest file detected: processing all GCOV scenes in ONE MAAP DPS job"
+    exec "$base_python" "${script_dir}/maap_batch_manifest.py" \
+      --manifest "$source_file" \
+      --runner "${script_dir}/run_maap.sh" \
+      --downloader "${script_dir}/maap_s3.py" \
+      --output-dir "$output_dir" \
+      --base-python "$base_python" \
+      --ease2-res "$ease2_res" \
+      --backscatter "$backscatter" \
+      --mode "$mode" \
+      --filter-window "$filter_window" \
+      --lia "$lia" \
+      --frequency "$frequency" \
+      --pol-pair "$pol_pair" \
+      --workers "$workers" \
+      --tile-workers "$tile_workers"
   fi
   case "${source_file,,}" in *.h5|*.hdf5) ;; *) echo "ERROR: Expected a .h5 or .hdf5: $source_file" >&2; exit 2 ;; esac
   stage_dir="$(mktemp -d "${TMPDIR:-/tmp}/maap_gcov_ease2_XXXXXXXX")"
